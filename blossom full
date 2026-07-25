@@ -135,7 +135,7 @@ local hud = {
         rows={ {"Snot_eater100","SPSh44"} } },
     card = { on=false, x=30, y=470, w=210, title="Gazawi122",
         equipped="VZ61" },
-    status = { on=false, x=270, y=470, w=210, title="Status Viewer",
+    status = { on=false, x=270, y=470, w=240, title="Status Viewer",
         player="Vithindhjd",
         items={"DV2","TT33","Attachments","WastelandShirt","Inventory","Makarov"} },
 }
@@ -222,23 +222,23 @@ local tabs = {
             { t="toggle", id="delta_npc_aim_draw_fov",   label="Show FOV Circle" },
         }},
 
-        { name="Weapon Mods", col=3, items={
-            { t="toggle", id="bs_no_recoil",     label="No Recoil" },
-            { t="toggle", id="bs_no_spread",     label="No Spread" },
-            { t="toggle", id="bs_no_sway",       label="No Sway" },
-            { t="toggle", id="bs_no_bobbing",    label="No Bobbing" },
-            { t="toggle", id="bs_no_muzzle",     label="No Muzzle FX" },
-            { t="toggle", id="bs_no_obstruct",   label="No Obstructions" },
-            { t="toggle", id="bs_unlock_modes",  label="Unlock Firemodes" },
-            { t="toggle", id="bs_instant_aim",   label="Instant Aim" },
-            { t="toggle", id="bs_instant_equip", label="Instant Equip" },
-            { t="toggle", id="bs_instant_bullet",label="Instant Bullet" },
-            { t="toggle", id="bs_rapid_fire",    label="Rapid Fire" },
-            { t="bind",   id="bs_rapid_key",     label="Rapid Fire Key", default=0 },
-            { t="toggle", id="bs_double_tap",    label="Double Tap" },
+        { name="Weapon Mods  ✕  BROKEN — DO NOT USE", col=3, items={
+            { t="note",   label="⚠  Gun Mods are currently broken. Do not enable." },
+            { t="toggle", id="bs_no_recoil",     label="✕  No Recoil  (broken)" },
+            { t="toggle", id="bs_no_spread",     label="✕  No Spread  (broken)" },
+            { t="toggle", id="bs_no_sway",       label="✕  No Sway  (broken)" },
+            { t="toggle", id="bs_no_bobbing",    label="✕  No Bobbing  (broken)" },
+            { t="toggle", id="bs_no_muzzle",     label="✕  No Muzzle FX  (broken)" },
+            { t="toggle", id="bs_no_obstruct",   label="✕  No Obstructions  (broken)" },
+            { t="toggle", id="bs_unlock_modes",  label="✕  Unlock Firemodes  (broken)" },
+            { t="toggle", id="bs_instant_aim",   label="✕  Instant Aim  (broken)" },
+            { t="toggle", id="bs_instant_equip", label="✕  Instant Equip  (broken)" },
+            { t="toggle", id="bs_instant_bullet",label="✕  Instant Bullet  (broken)" },
+            { t="toggle", id="bs_rapid_fire",    label="✕  Rapid Fire  (broken)" },
+            { t="bind",   id="bs_rapid_key",     label="✕  Rapid Fire Key  (broken)", default=0 },
+            { t="toggle", id="bs_double_tap",    label="✕  Double Tap  (broken)" },
             { t="sep" },
-            { t="toggle", id="auto_reload_on",   label="Auto Reload",
-              d="Triggers reload when magazine hits threshold." },
+            { t="toggle", id="auto_reload_on",   label="✕  Auto Reload  (broken)" },
             { t="slider", id="auto_reload_thresh",label="Reload at", min=0, max=30, default=5, fmt="%d", suffix=" rnds" },
         }},
 
@@ -389,7 +389,10 @@ local tabs = {
             { t="themecolor", id="dmg_hs_col", label="Headshot Color",  field="_dmghs" },
         }},
         { name="World", col=3, items={
-            { t="toggle", id="w_bright", label="Fullbright" },
+            { t="toggle", id="w_bright", label="Fullbright + No Grass",
+              d="Max brightness, kills all ambient shading and fog. Also removes terrain grass." },
+            { t="toggle", id="w_no_grass", label="No Grass Only",
+              d="Removes terrain grass without changing lighting." },
             { t="themecolor", id="w_sky", label="Sky Tint", field="_sky" },
         }},
         { name="Tracking & Prediction", col=3, items={
@@ -3247,16 +3250,30 @@ THREAT_STAMP = 0  -- last full scan time
 
 local function classify_inv(inventory)
     local guns, armor = 0, 0
+    local gun_names   = {}
+    local armor_names = {}
     for _, item in ipairs(inventory) do
         local il = item:lower()
+        local matched_gun = false
         for _, kw in ipairs(GUN_KEYWORDS) do
-            if il:find(kw, 1, true) then guns = guns + 1; break end
+            if il:find(kw, 1, true) then
+                guns = guns + 1
+                gun_names[#gun_names+1] = item
+                matched_gun = true
+                break
+            end
         end
-        for _, kw in ipairs(ARMOR_KEYWORDS) do
-            if il:find(kw, 1, true) then armor = armor + 1; break end
+        if not matched_gun then
+            for _, kw in ipairs(ARMOR_KEYWORDS) do
+                if il:find(kw, 1, true) then
+                    armor = armor + 1
+                    armor_names[#armor_names+1] = item
+                    break
+                end
+            end
         end
     end
-    return guns, armor
+    return guns, armor, gun_names, armor_names
 end
 
 local function threat_level(guns, armor)
@@ -3284,53 +3301,104 @@ local function update_threat_cache()
     for _, d in ipairs(cached_players) do
         local p = d.entity
         if p and p.IsValid and p.IsAlive and not p.IsLocal then
-            local guns, armor = classify_inv(d.inventory)
+            local guns, armor, gun_names, armor_names = classify_inv(d.inventory)
             local score, level = threat_level(guns, armor)
             THREAT_CACHE[p.Name] = {
                 score=score, guns=guns, armor=armor,
+                gun_names=gun_names, armor_names=armor_names,
                 level=level, name=p.Name, entity=p
             }
         end
     end
-    -- Update hud.status with the highest-threat nearby enemy
+    -- Update hud.status — pick whoever the crosshair is closest to
     if hud and hud.status then
-        local me = entity.GetLocalPlayer()
-        local mpos = me and me.Position
-        local best = nil
-        local best_score = -1
+        local sw, sh = draw.GetScreenSize()
+        local scx, scy = sw * 0.5, sh * 0.5
+
+        local best     = nil
+        local best_fov = math.huge
+
         for name, tc in pairs(THREAT_CACHE) do
             local p = tc.entity
             if p and p.IsValid and p.IsAlive then
-                local pos = p.Position
-                local dist = 99999
-                if pos and mpos then
-                    local dx=pos.X-mpos.X local dy=pos.Y-mpos.Y local dz=pos.Z-mpos.Z
-                    dist = math.sqrt(dx*dx+dy*dy+dz*dz)
-                end
-                -- Prioritize by threat score, tiebreak by distance
-                local priority = tc.score * 1000 - dist
-                if priority > best_score then
-                    best_score = priority
-                    best = {tc=tc, dist=dist}
+                -- Use head bone screen position for crosshair proximity
+                local bx, by, bv = p:GetBoneScreen("Head")
+                if bv then
+                    local fov = math.sqrt((bx-scx)^2 + (by-scy)^2)
+                    if fov < best_fov then
+                        best_fov = fov
+                        local pos  = p.Position
+                        local mpos2 = hud._mpos  -- cached below
+                        local dist = 99999
+                        if pos and mpos2 then
+                            local dx=pos.X-mpos2.X local dy=pos.Y-mpos2.Y local dz=pos.Z-mpos2.Z
+                            dist = math.sqrt(dx*dx+dy*dy+dz*dz)
+                        end
+                        best = {tc=tc, dist=dist, fov=fov}
+                    end
                 end
             end
+        end
+
+        -- Cache local player position for distance calc
+        local me2 = entity.GetLocalPlayer()
+        hud._mpos = me2 and me2.Position
+
+        -- If crosshair isn't near anyone (>400px from all players),
+        -- fall back to nearest player rather than showing nothing
+        if not best or best.fov > 400 then
+            local fallback = nil
+            local best_dist = math.huge
+            for name, tc in pairs(THREAT_CACHE) do
+                local p = tc.entity
+                if p and p.IsValid and p.IsAlive then
+                    local pos = p.Position
+                    local mpos2 = hud._mpos
+                    if pos and mpos2 then
+                        local dx=pos.X-mpos2.X local dy=pos.Y-mpos2.Y local dz=pos.Z-mpos2.Z
+                        local d = math.sqrt(dx*dx+dy*dy+dz*dz)
+                        if d < best_dist then
+                            best_dist = d
+                            fallback = {tc=tc, dist=d, fov=9999}
+                        end
+                    end
+                end
+            end
+            if fallback then best = fallback end
         end
         if best then
             local tc = best.tc
             local dist_m = math.floor(best.dist * 0.28)
             local label = THREAT_LABELS[tc.level+1] or "?"
-            hud.status.player = tc.name
+            hud.status.player = tc.name .. (best.fov < 400 and "  ◎" or "  ·")
             hud.status.threat_level = tc.level
-            hud.status.items = {
-                string.format("Threat:  %s (score %d)", label, tc.score),
-                string.format("Guns:    %d", tc.guns),
-                string.format("Armor:   %d", tc.armor),
+            local items = {
+                string.format("Threat:  %s  |  Score %d", label, tc.score),
                 string.format("Dist:    %dm", dist_m),
             }
+            -- List each gun by name
+            if tc.gun_names and #tc.gun_names > 0 then
+                items[#items+1] = string.format("Guns (%d):", tc.guns)
+                for _, gn in ipairs(tc.gun_names) do
+                    items[#items+1] = "  · " .. gn
+                end
+            else
+                items[#items+1] = "Guns:    none"
+            end
+            -- List each armor piece
+            if tc.armor_names and #tc.armor_names > 0 then
+                items[#items+1] = string.format("Armor (%d):", tc.armor)
+                for _, an in ipairs(tc.armor_names) do
+                    items[#items+1] = "  · " .. an
+                end
+            else
+                items[#items+1] = "Armor:   none"
+            end
+            hud.status.items = items
         else
-            hud.status.player = "No enemies"
+            hud.status.player = "No players visible"
             hud.status.threat_level = 0
-            hud.status.items = {"Scanning..."}
+            hud.status.items = {"Aim at a player to scan"}
         end
     end
 end
@@ -3671,13 +3739,17 @@ local function hsv2rgb(h,s,v)
 end
 
 -- Helper: get base ESP color, applying rainbow if enabled
+local _ESP_COL_BUF = {1,1,1,1}  -- reusable color buffer for esp_col
 local function esp_col(base, alpha)
     alpha = alpha or 1
     if ui.vals["esp_rainbow"] then
         local r,g,b = hsv2rgb(ESP_RAINBOW_HUE,0.9,1)
-        return {r,g,b,alpha}
+        _ESP_COL_BUF[1]=r; _ESP_COL_BUF[2]=g; _ESP_COL_BUF[3]=b; _ESP_COL_BUF[4]=alpha
+    else
+        _ESP_COL_BUF[1]=base[1] or 1; _ESP_COL_BUF[2]=base[2] or 1
+        _ESP_COL_BUF[3]=base[3] or 1; _ESP_COL_BUF[4]=alpha
     end
-    return {(base[1] or 1),(base[2] or 1),(base[3] or 1),alpha}
+    return _ESP_COL_BUF
 end
 
 -- Helper: compute per-player alpha with fade-by-distance
@@ -3940,13 +4012,19 @@ local cham_anim = math.floor(fvn("cham_anim_mode") or 1)
 end
 
 DIST_CACHE = {}  -- dist_m->string cache
+ESP_VIS_CACHE = {}  -- player visibility cache {v=bool, t=time}
 DIST_CACHE_T = 0  -- last clear time
 
 local function draw_players_esp()
     if not fvb("esp_on") then return end
     -- Purge dist string cache every 30s to prevent unbounded growth
     local _now2 = utility.GetTime()
-    if _now2 - DIST_CACHE_T > 30 then DIST_CACHE={}; DIST_CACHE_T=_now2 end
+    if _now2 - DIST_CACHE_T > 30 then
+        DIST_CACHE={}; DIST_CACHE_T=_now2
+        -- Also purge vis cache for players no longer in server
+        local live={}; for _,p2 in ipairs(players) do live[p2.Name]=true end
+        for k in pairs(ESP_VIS_CACHE) do if not live[k] then ESP_VIS_CACHE[k]=nil end end
+    end
     local players = entity.GetPlayers()
     if not players then return end
 
@@ -3956,7 +4034,7 @@ local function draw_players_esp()
 
     local t       = ib_clock()
     local sw, sh  = draw.GetScreenSize()
-    local scx,scy = input.GetScreenCenter()
+    local scx,scy = sw*0.5, sh*0.5  -- true game center, not overlay center
 
     if ui.vals["esp_rainbow"] then
         ESP_RAINBOW_HUE = (ESP_RAINBOW_HUE + utility.GetDeltaTime() * 0.3) % 1
@@ -4013,17 +4091,7 @@ local function draw_players_esp()
     local do_prio      = ui.vals["esp_priority_low_hp"]
     local do_kill_icon = ui.vals["esp_kill_icon"]
 
-    -- Soft glow: layers semi-transparent wider versions behind elements
-    local function glow_rect(x,y,w,h,c,r)
-        esp_glow_rect(x,y,w,h,c[1],c[2],c[3],c[4],r)
-    end
-    local function glow_line(x1,y1,x2,y2,c,w2)
-        esp_glow_line(x1,y1,x2,y2,c[1],c[2],c[3],c[4],w2)
-    end
-    -- Shadow+color text
-    local function otext(x,y,txt,c,sz)
-        esp_otext(x,y,txt,c[1],c[2],c[3],c[4],sz)
-    end
+    -- glow_rect/glow_line/otext call esp_glow_* directly (hoisted, no closures)
 
     local prio_name = nil
     if prio_low_hp then
@@ -4046,10 +4114,10 @@ local function draw_players_esp()
                 local age=t-lp2.t
                 if age<5 then
                     local fa=(1-age/5)*g_alpha*0.5
-                    local gc={0.7,0.7,0.7,fa}
-                    glow_rect(lp2.x,lp2.y,lp2.w,lp2.h,gc,2)
-                    draw.Rect(lp2.x,lp2.y,lp2.w,lp2.h,gc,0,1)
-                    otext(lp2.x+lp2.w*0.5-draw.GetTextSize("LKP",10)*0.5,lp2.y-12,"LKP",gc,10)
+                    esp_glow_rect(lp2.x,lp2.y,lp2.w,lp2.h,0.7,0.7,0.7,fa,2)
+                    _RC[1]=0.7;_RC[2]=0.7;_RC[3]=0.7;_RC[4]=fa
+                    draw.Rect(lp2.x,lp2.y,lp2.w,lp2.h,_RC,0,1)
+                    esp_otext(lp2.x+lp2.w*0.5-draw.GetTextSize("LKP",10)*0.5,lp2.y-12,"LKP",0.7,0.7,0.7,fa,10)
                 else ESP_LAST_POS[p.Name]=nil end
             end
             goto epcont
@@ -4063,11 +4131,30 @@ local function draw_players_esp()
 
         local scale_mult=scale_base
 
-        local is_vis=false
-        pcall(function()
-            local char=p.Character
-            if char then is_vis=raycast.IsPlayerVisible(char) end
-        end)
+        -- Visibility: cached per player, refreshed every 150ms to avoid spikes
+        local vis_key = p.Name
+        local vis_cache_entry = ESP_VIS_CACHE[vis_key]
+        local is_vis = false
+        if vis_cache_entry then
+            is_vis = vis_cache_entry.v
+            if t - vis_cache_entry.t > 0.15 then
+                -- Time to refresh this player's visibility
+                local char = p.Character
+                if char then
+                    local ok, v2 = pcall(raycast.IsPlayerVisible, char)
+                    if ok then is_vis = v2 end
+                end
+                vis_cache_entry.v = is_vis
+                vis_cache_entry.t = t
+            end
+        else
+            local char = p.Character
+            if char then
+                local ok, v2 = pcall(raycast.IsPlayerVisible, char)
+                if ok then is_vis = v2 end
+            end
+            ESP_VIS_CACHE[vis_key] = {v=is_vis, t=t}
+        end
         if vis_only and not is_vis then goto epcont end
 
         run_esp_chams(p,t,is_vis)
@@ -4105,7 +4192,7 @@ local function draw_players_esp()
                 local pp=0.5+math.sin(t*pulse_spd*2.5)*0.5
                 bc={1,0.22,0.22,pa*(0.5+pp*0.5)}
             end
-            glow_rect(b.x,b.y,b.w,b.h,{bc[1],bc[2],bc[3],pa*0.55},2.5)
+            esp_glow_rect(b.x,b.y,b.w,b.h,{bc[1][1],{bc[1][2],{bc[1][3],{bc[1][4],bc[2],bc[3],pa*0.55},2.5)
             if style==1 then
                 draw.Rect(b.x,b.y,b.w,b.h,bc,0,thick)
             elseif style==2 then
@@ -4122,14 +4209,14 @@ local function draw_players_esp()
                 draw.RectFilled(b.x,b.y,b.w,b.h,{bc[1],bc[2],bc[3],pa*0.22})
             elseif style==5 then
                 local cr=math.max(b.w,b.h)*0.55
-                glow_line(b.x+b.w*0.5,b.y,b.x+b.w*0.5,b.y,{bc[1],bc[2],bc[3],pa},cr*0.18)
+                esp_glow_line(b.x+b.w*0.5,b.y,b.x+b.w*0.5,b.y,{bc[1][1],{bc[1][2],{bc[1][3],{bc[1][4],bc[2],bc[3],pa},cr*0.18)
                 draw.Circle(b.x+b.w*0.5,b.y+b.h*0.5,cr,bc,48,thick)
             elseif style==6 then
                 local pts=get_3d_box_pts(p)
                 if pts then for i=1,4 do local n=i%4+1
-                    glow_line(pts[i][1],pts[i][2],pts[n][1],pts[n][2],bc,1.5)
-                    glow_line(pts[i+4][1],pts[i+4][2],pts[n+4][1],pts[n+4][2],bc,1.5)
-                    glow_line(pts[i][1],pts[i][2],pts[i+4][1],pts[i+4][2],bc,1.5)
+                    esp_glow_line(pts[i][1],pts[i][2],pts[n][1],pts[n][2],bc[1],bc[2],bc[3],bc[4],1.5)
+                    esp_glow_line(pts[i+4][1],pts[i+4][2],pts[n+4][1],pts[n+4][2],bc[1],bc[2],bc[3],bc[4],1.5)
+                    esp_glow_line(pts[i][1],pts[i][2],pts[i+4][1],pts[i+4][2],bc[1],bc[2],bc[3],bc[4],1.5)
                     draw.Line(pts[i][1],pts[i][2],pts[n][1],pts[n][2],bc,thick)
                     draw.Line(pts[i+4][1],pts[i+4][2],pts[n+4][1],pts[n+4][2],bc,thick)
                     draw.Line(pts[i][1],pts[i][2],pts[i+4][1],pts[i+4][2],bc,thick)
@@ -4186,7 +4273,7 @@ local function draw_players_esp()
             local tw=draw.GetTextSize(p.Name,fsz)
             local tx=b.x+b.w*0.5-tw*0.5 local ty=b.y-fsz-4
             draw.RectFilled(tx-4,ty-1,tw+8,fsz+2,{0,0,0,pa*0.55},3)
-            otext(tx,ty,p.Name,ecol_v,fsz)
+            esp_otext(tx,ty,p.Name,ecol_v[1],ecol_v[2],ecol_v[3],ecol_v[4],fsz)
         end
 
         -- DISTANCE
@@ -4196,7 +4283,7 @@ local function draw_players_esp()
             local tw=draw.GetTextSize(dtxt,10)
             local tx=b.x+b.w*0.5-tw*0.5 local ty=b.y+b.h+4
             draw.RectFilled(tx-3,ty-1,tw+6,12,{0,0,0,pa*0.45},2)
-            otext(tx,ty,dtxt,{ecol_v[1],ecol_v[2],ecol_v[3],pa*0.85},10)
+            esp_otext(tx,ty,dtxt,{ecol_v[1],ecol_v[2],ecol_v[3],pa*0.85}[1],pa*0.85}[2],pa*0.85}[3],pa*0.85}[4],10)
         end
 
         -- WEAPON
@@ -4206,7 +4293,7 @@ local function draw_players_esp()
                 local tw=draw.GetTextSize(wname,10)
                 local tx=b.x+b.w*0.5-tw*0.5 local ty=b.y+b.h+16
                 draw.RectFilled(tx-3,ty-1,tw+6,12,{0,0,0,pa*0.45},2)
-                otext(tx,ty,wname,{ecol_v[1]*0.8+0.2,ecol_v[2]*0.8+0.2,ecol_v[3]*0.8+0.2,pa*0.75},10)
+                esp_otext(tx,ty,wname,{ecol_v[1]*0.8+0.2,ecol_v[2]*0.8+0.2,ecol_v[3]*0.8+0.2,pa*0.75}[1],pa*0.75}[2],pa*0.75}[3],pa*0.75}[4],10)
             end
         end
 
@@ -4215,7 +4302,7 @@ local function draw_players_esp()
             local ox,oy
             if snap_origin==1 then ox,oy=scx,scy elseif snap_origin==2 then ox,oy=scx,sh else ox,oy=scx,0 end
             local sthick=snap_thick
-            glow_line(ox,oy,b.x+b.w*0.5,b.y+b.h,{ecol_v[1],ecol_v[2],ecol_v[3],pa*0.4},sthick)
+            esp_glow_line(ox,oy,b.x+b.w*0.5,b.y+b.h,{ecol_v[1][1],{ecol_v[1][2],{ecol_v[1][3],{ecol_v[1][4],ecol_v[2],ecol_v[3],pa*0.4},sthick)
             draw.Line(ox,oy,b.x+b.w*0.5,b.y+b.h,{ecol_v[1],ecol_v[2],ecol_v[3],pa*0.65},sthick)
         end
 
@@ -4239,7 +4326,7 @@ local function draw_players_esp()
                 local ax,ay,av=p:GetBoneScreen(pair[1])
                 local bx2,by2,bv=p:GetBoneScreen(pair[2])
                 if av and bv then
-                    glow_line(ax,ay,bx2,by2,{bc2[1],bc2[2],bc2[3],bc2[4]*0.35},bthick+1)
+                    esp_glow_line(ax,ay,bx2,by2,{bc2[1][1],{bc2[1][2],{bc2[1][3],{bc2[1][4],bc2[2],bc2[3],bc2[4]*0.35},bthick+1)
                     draw.Line(ax,ay,bx2,by2,bc2,bthick)
                     if do_jnt then joint_pts[pair[1]]={ax,ay}; joint_pts[pair[2]]={bx2,by2} end
                 end
@@ -4261,16 +4348,16 @@ local function draw_players_esp()
                 local tcol=THREAT_COLORS[level+1] or {0.5,0.5,0.5,1}
                 local bar_h=math.max(4,b.h*(level/4))
                 draw.RectFilled(b.x+b.w+4,b.y+b.h-bar_h,4,bar_h,{tcol[1],tcol[2],tcol[3],pa*0.85},2)
-                if level>=3 then otext(b.x+b.w+10,b.y+2,THREAT_LABELS[level+1] or "",{tcol[1],tcol[2],tcol[3],pa},9) end
+                if level>=3 then esp_otext(b.x+b.w+10,b.y+2,THREAT_LABELS[level+1] or "",{tcol[1],tcol[2],tcol[3],pa}[1],pa}[2],pa}[3],pa}[4],9) end
             end
         end
 
         -- CROUCH / SPRINT
         if do_crouch and b_valid then
-            if (p.HipHeight or 0)<0.5 then otext(b.x+b.w+6,b.y+b.h*0.5-5,"[C]",{0.9,0.9,0.2,pa},10) end
+            if (p.HipHeight or 0)<0.5 then esp_otext(b.x+b.w+6,b.y+b.h*0.5-5,"[C]",{0.9,0.9,0.2,pa}[1],pa}[2],pa}[3],pa}[4],10) end
         end
         if do_sprint and b_valid then
-            if (p.WalkSpeed or 16)>20 then otext(b.x+b.w+6,b.y+b.h*0.5+6,"[S]",{0.2,0.9,0.9,pa},10) end
+            if (p.WalkSpeed or 16)>20 then esp_otext(b.x+b.w+6,b.y+b.h*0.5+6,"[S]",{0.2,0.9,0.9,pa}[1],pa}[2],pa}[3],pa}[4],10) end
         end
 
         -- CAMERA DOT
@@ -4304,7 +4391,7 @@ local function draw_players_esp()
                             if al>0.5 then
                                 adx=adx/al*arlen ady=ady/al*arlen
                                 local ac={0.35,1,0.55,pa}
-                                glow_line(bx2,by2,bx2+adx,by2+ady,ac,1.5)
+                                esp_glow_line(bx2,by2,bx2+adx,by2+ady,ac[1],ac[2],ac[3],ac[4],1.5)
                                 draw.Line(bx2,by2,bx2+adx,by2+ady,ac,1.5)
                                 local px=-ady*0.28 local py=adx*0.28
                                 draw.Line(bx2+adx,by2+ady,bx2+adx*0.65+px,by2+ady*0.65+py,ac,1.5)
@@ -4413,7 +4500,7 @@ local function draw_players_esp()
                 local fa=(1-age/3)*g_alpha
                 local pulse=0.7+math.sin(t*8)*0.3
                 draw.Circle(ki.x,ki.y,11*pulse,{1,0.2,0.2,fa*0.5},12,2)
-                otext(ki.x-4,ki.y-6,"X",{1,0.35,0.35,fa},14)
+                esp_otext(ki.x-4,ki.y-6,"X",{1,0.35,0.35,fa}[1],fa}[2],fa}[3],fa}[4],14)
                 keep[#keep+1]=ki
             end
         end
@@ -5465,13 +5552,59 @@ local function run_auto_reload()
     end)
 end
 
+-- Store original lighting values so we can restore them when toggled off
+local ORIG_LIGHTING = nil
+local ORIG_GRASS    = nil
+local WFX_WAS_ON    = false
+
 local function run_world_fx()
-    if fvb("w_bright") then
-        pcall(function()
-            lighting.SetBrightness(2) lighting.SetAmbient(1) lighting.SetOutdoorAmbient(1)
-            lighting.SetFogEnd(100000) lighting.SetFogStart(99999)
-            lighting.SetDiffuseScale(0) lighting.SetSpecularScale(0)
-        end)
+    local want_bright = fvb("w_bright")
+    if want_bright then
+        if not ORIG_LIGHTING then
+            ORIG_LIGHTING = {
+                brightness = lighting.GetBrightness(),
+                exposure   = lighting.GetExposure(),
+                ambient    = lighting.GetAmbient(),
+                outdoor    = lighting.GetOutdoorAmbient(),
+                fog_start  = lighting.GetFogStart(),
+                fog_end    = lighting.GetFogEnd(),
+                diffuse    = lighting.GetDiffuseScale(),
+                specular   = lighting.GetSpecularScale(),
+            }
+        end
+        if not ORIG_GRASS then ORIG_GRASS = terrain.GetGrassLength() end
+        lighting.SetBrightness(8)
+        lighting.SetExposure(1)
+        lighting.SetAmbient(1)
+        lighting.SetOutdoorAmbient(1)
+        lighting.SetDiffuseScale(0)
+        lighting.SetSpecularScale(0)
+        lighting.SetFogStart(99999)
+        lighting.SetFogEnd(100000)
+        terrain.SetGrassLength(0)
+        WFX_WAS_ON = true
+    elseif WFX_WAS_ON then
+        if ORIG_LIGHTING then
+            lighting.SetBrightness(ORIG_LIGHTING.brightness)
+            lighting.SetExposure(ORIG_LIGHTING.exposure)
+            lighting.SetAmbient(ORIG_LIGHTING.ambient)
+            lighting.SetOutdoorAmbient(ORIG_LIGHTING.outdoor)
+            lighting.SetDiffuseScale(ORIG_LIGHTING.diffuse)
+            lighting.SetSpecularScale(ORIG_LIGHTING.specular)
+            lighting.SetFogStart(ORIG_LIGHTING.fog_start)
+            lighting.SetFogEnd(ORIG_LIGHTING.fog_end)
+            ORIG_LIGHTING = nil
+        end
+        if ORIG_GRASS then terrain.SetGrassLength(ORIG_GRASS); ORIG_GRASS = nil end
+        WFX_WAS_ON = false
+    end
+    if not want_bright then
+        if fvb("w_no_grass") then
+            if not ORIG_GRASS then ORIG_GRASS = terrain.GetGrassLength() end
+            terrain.SetGrassLength(0)
+        elseif ORIG_GRASS and not WFX_WAS_ON then
+            terrain.SetGrassLength(ORIG_GRASS); ORIG_GRASS = nil
+        end
     end
 end
 
